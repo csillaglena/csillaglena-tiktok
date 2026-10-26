@@ -389,7 +389,7 @@
     function loadCloudConfig() { try { const saved=JSON.parse(localStorage.getItem(CLOUD_CONFIG_KEY) || '{}'); return saved.url&&saved.key?saved:BUILTIN_CLOUD_CONFIG; } catch(e) { return BUILTIN_CLOUD_CONFIG; } }
     function serializeState() { return {themes:state.themes,contents:state.contents,skippedDates:state.skippedDates,snapshots:state.snapshots,overview:state.overview,importedFiles:state.importedFiles,settings:state.settings}; }
     function applyRemotePayload(payload) { if (!payload || typeof payload !== 'object') return; Object.assign(state, {...defaultState(), ...payload}); }
-    function cloudMessage(message, type='') { const el=qs('#cloudMessage'); if(el) el.textContent=message; const status=qs('#cloudStatus'); if(status){status.className=`cloud-status ${type}`;} }
+    function cloudMessage(message, type='') { const el=qs('#cloudMessage'); if(el) el.textContent=message; const gate=qs('#cloudGateMessage'); if(gate) gate.textContent=message; const status=qs('#cloudStatus'); if(status){status.className=`cloud-status ${type}`;} }
     function updateCloudUI() {
       const status=qs('#cloudStatus'); if(!status) return;
       const config=loadCloudConfig();
@@ -505,25 +505,31 @@
     function exportBackup(){const blob=new Blob([JSON.stringify({...state,exportedAt:new Date().toISOString()},null,2)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`csillaglena-tiktok-mentes-${todayISO()}.json`;a.click();URL.revokeObjectURL(a.href);showToast('A JSON biztonsági mentés letöltve.');}
     function importBackup(file){const r=new FileReader();r.onload=()=>{try{const incoming=JSON.parse(r.result);if(!incoming||!Array.isArray(incoming.contents))throw Error();Object.assign(state,{...state,...incoming});saveState();renderAll();showToast('A biztonsági mentés visszatöltve.');}catch(e){showToast('Ez nem érvényes biztonsági mentés.','bad');}};r.readAsText(file);}
     function cloudInputs() { return {url:qs('#cloudUrl')?.value.trim(),key:qs('#cloudKey')?.value.trim(),email:qs('#cloudEmail')?.value.trim(),password:qs('#cloudPassword')?.value}; }
+    function authCredentials(prefix='cloud') { return {email:qs(`#${prefix}Email`)?.value.trim(),password:qs(`#${prefix}Password`)?.value}; }
     function configureCloud(show=true) {
       const input=cloudInputs();
       if(!input.url||!input.key){cloudMessage('Add meg a Supabase Project URL-t és az anon public key-t.','error');return false;}
       if(!window.supabase){cloudMessage('A Supabase könyvtár nem töltődött be. Ellenőrizd az internetkapcsolatot.','error');return false;}
       try { cloudClient=window.supabase.createClient(input.url,input.key); localStorage.setItem(CLOUD_CONFIG_KEY,JSON.stringify({url:input.url,key:input.key})); updateCloudUI(); if(show) cloudMessage('Kapcsolat beállítva. Most jelentkezz be vagy hozz létre fiókot.'); return true; } catch(e) { cloudMessage('Nem sikerült létrehozni a Supabase-kapcsolatot. Ellenőrizd az URL-t és a kulcsot.','error'); return false; }
     }
-    async function signUpCloud() {
-      const input=cloudInputs(); if(!configureCloud(false)) return;
-      if(!input.email||!input.password){cloudMessage('A fiók létrehozásához email-cím és legalább 6 karakteres jelszó kell.','error');return;}
-      cloudMessage('Fiók létrehozása folyamatban…'); const {data,error}=await cloudClient.auth.signUp({email:input.email,password:input.password});
+    async function signUpCloud(prefix='cloud') {
+      const input=cloudInputs(), auth=authCredentials(prefix); if(!configureCloud(false)) return;
+      if(!auth.email||!auth.password){cloudMessage('A fiók létrehozásához email-cím és legalább 6 karakteres jelszó kell.','error');return;}
+      cloudMessage('Fiók létrehozása folyamatban…'); const {data,error}=await cloudClient.auth.signUp({email:auth.email,password:auth.password});
       if(error){cloudMessage('Nem sikerült a fiók létrehozása: '+error.message,'error');return;}
-      if(data.session){cloudUser=data.user;await pullFromCloud();updateCloudUI();} else cloudMessage('Ellenőrizd a postaládádat, majd jelentkezz be az emailben kapott megerősítés után.');
+      if(data.session){cloudUser=data.user;await pullFromCloud();updateCloudUI();if(prefix==='gate')closeModal();} else cloudMessage('Ellenőrizd a postaládádat, majd jelentkezz be az emailben kapott megerősítés után.');
     }
-    async function signInCloud() {
-      const input=cloudInputs(); if(!configureCloud(false)) return;
-      if(!input.email||!input.password){cloudMessage('A bejelentkezéshez add meg az email-címedet és a jelszavadat.','error');return;}
-      cloudMessage('Bejelentkezés folyamatban…'); const {data,error}=await cloudClient.auth.signInWithPassword({email:input.email,password:input.password});
+    async function signInCloud(prefix='cloud') {
+      const auth=authCredentials(prefix); if(!configureCloud(false)) return;
+      if(!auth.email||!auth.password){cloudMessage('A bejelentkezéshez add meg az email-címedet és a jelszavadat.','error');return;}
+      cloudMessage('Bejelentkezés folyamatban…'); const {data,error}=await cloudClient.auth.signInWithPassword({email:auth.email,password:auth.password});
       if(error){cloudMessage('Nem sikerült a bejelentkezés: '+error.message,'error');return;}
-      cloudUser=data.user; await pullFromCloud(); updateCloudUI();
+      cloudUser=data.user; await pullFromCloud(); updateCloudUI(); if(prefix==='gate') closeModal();
+    }
+    function openCloudLoginGate() {
+      if(cloudUser||!cloudClient||qs('#modalBackdrop').classList.contains('open')) return;
+      qs('#modal').innerHTML='<div class="modal-head"><div><div class="eyebrow">CSILLAG LÉNA TARTALOMTERVEZŐ</div><h2 style="margin-top:5px">Jelentkezz be a folytatáshoz</h2></div></div><div class="modal-body"><p class="muted" style="font-size:13px;margin-bottom:16px">A tartalmaidat biztonságosan a felhőben tartjuk, így telefonról és számítógépről is ugyanazt látod.</p><div class="form-grid"><div class="field full"><label for="gateEmail">Email-cím</label><input id="gateEmail" type="email" autocomplete="username" placeholder="te@pelda.hu"></div><div class="field full"><label for="gatePassword">Jelszó</label><input id="gatePassword" type="password" autocomplete="current-password" placeholder="A felhőfiókod jelszava"></div></div><p id="cloudGateMessage" class="cloud-note">Ha még nincs fiókod, először válaszd az „Új fiók létrehozása” gombot.</p></div><div class="modal-foot"><div></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" id="gateSignupBtn">Új fiók létrehozása</button><button class="btn primary" id="gateLoginBtn">Bejelentkezés</button></div></div>';
+      qs('#gateLoginBtn').onclick=()=>signInCloud('gate'); qs('#gateSignupBtn').onclick=()=>signUpCloud('gate'); qs('#modalBackdrop').classList.add('open');
     }
     async function initCloud() {
       const config=loadCloudConfig(); if(!config.url||!config.key||!window.supabase){updateCloudUI();return;}
@@ -533,6 +539,7 @@
       const {data}=await cloudClient.auth.getSession();
       if(data?.session?.user){cloudUser=data.session.user;await pullFromCloud();}
       updateCloudUI();
+      if(!cloudUser) setTimeout(openCloudLoginGate,180);
     }
     async function pullFromCloud() {
       if(!cloudClient||!cloudUser||cloudPulling)return; cloudPulling=true; cloudMessage('Adatok betöltése a felhőből…');
